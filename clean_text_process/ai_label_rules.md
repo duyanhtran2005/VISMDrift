@@ -1,15 +1,10 @@
-﻿# Rule hiệu chỉnh AI label sau benchmark fixed
+﻿# Rule hiệu chỉnh AI label 
 
 ## 1. Kết luận từ benchmark 
 
-AI label ban đầu **khá tốt**, đặc biệt ở sentiment, nên chiến lược hiệu chỉnh hợp lý là **AI-first calibration**:
+AI label ban đầu **khá tốt**, đặc biệt ở sentiment
 
-- Giữ nhãn AI làm nhãn nền.
-- Chỉ sửa các lỗi có tính hệ thống.
-- Override 500 dòng human gold set bằng nhãn người.
-- Dòng mơ hồ nên đánh `low_confidence`, không ép đổi nhãn quá rộng.
-
-Benchmark fixed trên gold set:
+Benchmark AI trên gold set:
 
 - Relevance Accuracy ≈ 0.734, Macro-F1 ≈ 0.697.
 - Relevance có recall lớp relevant rất cao, nhưng còn nhiều false positive: AI giữ nhầm comment không liên quan.
@@ -42,16 +37,7 @@ Tổng số relevance mismatch: 133 dòng.
 
 ### Rule relevance đề xuất
 
-#### R1. Không dùng `id` để match gold/full
-Luôn match bằng khóa mạnh như:
-
-1. `topic + video_id + created_at + text`
-2. `topic + source_item_id + created_at + text`
-3. `topic + video_id + text`
-4. `topic + source_item_id + text`
-5. fallback unique: `topic + text` hoặc `topic + clean_text`
-
-#### R2. Giảm false positive relevance của AI
+#### R1. Giảm false positive relevance của AI
 Nếu AI gắn `is_relevant = 1`, chỉ chuyển về `0` khi có dấu hiệu rõ:
 
 - Comment quá ngắn/chung chung, thiếu ngữ cảnh: “chịu”, “ăn hên thôi”, “còn k”, “chuẩn bác”…
@@ -65,7 +51,7 @@ Nếu AI gắn `is_relevant = 1`, chỉ chuyển về `0` khi có dấu hiệu r
 - Quảng cáo, link bán hàng, shop, comment mua bán không thể hiện đánh giá topic.
 - Tiếng Anh/ngoại ngữ ngoài phạm vi phân tích tiếng Việt nếu nhóm đã thống nhất loại.
 
-#### R3. Khôi phục false negative relevance của AI
+#### R2. Khôi phục false negative relevance của AI
 Nếu AI gắn `is_relevant = 0`, chuyển về `1` khi có dấu hiệu rõ:
 
 - Có alias/từ khóa topic:
@@ -105,17 +91,14 @@ Tổng số sentiment mismatch: {len(sent_rows)} dòng.
 
 ### Rule sentiment đề xuất
 
-#### S1. Giữ AI sentiment làm nền
-Vì sentiment Macro-F1 khoảng 0.755, không nên đảo nhãn quá mạnh. Chỉ sửa khi có cue rõ hoặc lỗi lặp lại.
-
-#### S2. Sửa negative bị AI làm mềm thành neutral
+#### S1. Sửa negative bị AI làm mềm thành neutral
 Chuyển `neutral -> negative` khi có dấu hiệu rõ:
 
 - Mỉa mai/cà khịa: phốn lào, phú ngao, kẹt pháo, bàn danh dự, trắng tay, hạng nhì, 6.9 điểm, chị 7, cười/haha/😂 kèm chê.
 - Chê rõ sản phẩm/người/topic: không đáng mua, thất bại, tệ nhất, pin yếu, sọc màn, camera cùi, xe dỏm, của nợ, phá sản, khuyên bán, hút máu, lùa gà.
 - Câu có cấu trúc khen giả/chê thật: “giỏi trong trận nhỏ… đá chả ra”, “tuyệt vời hahaha” nhưng ngữ cảnh mỉa mai.
 
-#### S3. Sửa positive bị AI bỏ sót
+#### S2. Sửa positive bị AI bỏ sót
 Chuyển `neutral -> positive` khi có khen/ủng hộ rõ:
 
 - Đá hay hơn, chơi tốt, xứng đáng, chúc mừng, hời, ngon, đẹp, ổn, đáng mua.
@@ -124,7 +107,7 @@ Chuyển `neutral -> positive` khi có khen/ủng hộ rõ:
 
 Không dùng từ yếu đơn lẻ như “được”, “hay”, “ổn” để sửa nếu câu là câu hỏi/lựa chọn.
 
-#### S4. Đưa về neutral khi AI diễn giải quá mức
+#### S3. Đưa về neutral khi AI diễn giải quá mức
 Chuyển AI positive/negative về neutral khi:
 
 - Câu hỏi thông tin/lựa chọn: “so với…”, “có nên…”, “giá bao nhiêu”, “pin ổn không”, “A hay B”.
@@ -134,36 +117,5 @@ Chuyển AI positive/negative về neutral khi:
 - Câu mixed sentiment cân bằng: vừa khen vừa chê, không nghiêng rõ.
 - Câu chỉ thể hiện tiếc/thiếu may mắn/cảm thông, không chê rõ.
 
-#### S5. Gắn `low_confidence` thay vì ép nhãn với case mơ hồ
-Các case sau nên đánh low-confidence, không tự động sửa mạnh:
-
-- Comment rất ngắn.
-- Câu có sarcasm không rõ đối tượng.
-- Câu vừa khen vừa chê nhưng có thiên hướng nhẹ.
-- Câu reply thiếu parent context.
-- Câu cảm xúc hướng nhiều đối tượng trong cùng comment.
-
-## 4. Cách dùng rule trong pipeline final
-
-1. Khởi tạo:
-   - `final_is_relevant = ai_is_relevant`
-   - `final_manual_label = ai_manual_label`
-
-2. Override human gold set bằng match khóa mạnh, không dùng `id` đơn lẻ.
-
-3. Áp rule relevance trước sentiment:
-   - Nếu `final_is_relevant = 0` thì bắt buộc `final_manual_label = 2`.
-
-4. Áp sentiment calibration có kiểm soát:
-   - Strong negative/positive trước.
-   - Neutral/question/mixed sau.
-   - Weak rule chỉ áp dụng nếu không có rule mạnh và nên gắn `low_confidence`.
-
-5. Xuất thêm:
-   - `label_source`
-   - `quality_flag`
-   - `label_confidence`
-   - `sentiment_score_raw`
-   - `sentiment_score_weighted`
 
 
